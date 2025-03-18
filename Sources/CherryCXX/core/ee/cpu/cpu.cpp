@@ -2859,6 +2859,16 @@ void decodeInstr(u32 instr) {
                     case REGIMMOpcode::BGEZ : iBGEZ(instr); break;
                     case REGIMMOpcode::BLTZL: iBLTZL(instr); break;
                     case REGIMMOpcode::BGEZL: iBGEZL(instr); break;
+                    case 0x19: {
+                        const auto rs = getRs(instr);
+                        const auto imm = getImm(instr);
+                        
+                        auto reg = regs[rs]._u32[0];
+                        reg = (reg & 0x7) ^ (imm & 0x7);
+                        
+                        sa = reg * 2;
+                        break;
+                    }
                     default:
                         std::printf("[EE Core   ] Unhandled REGIMM instruction 0x%02X (0x%08X) @ 0x%08X\n", rt, instr, cpc);
 

@@ -1,0 +1,635 @@
+/*
+ * Gearcoleco - ColecoVision Emulator
+ * Copyright (C) 2021  Ignacio Sanchez
+
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * any later version.
+
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see http://www.gnu.org/licenses/
+ *
+ */
+
+#include <string>
+#include <algorithm>
+#include <ctype.h>
+#include "Cartridge.h"
+#define MINIZ_NO_ZLIB_COMPATIBLE_NAMES
+#include "miniz.h"
+#undef MINIZ_NO_ZLIB_COMPATIBLE_NAMES
+#include "game_db.h"
+#include "common.h"
+#include "ips_patch.h"
+#include <utility>
+
+Cartridge::Cartridge()
+{
+    InitPointer(m_pROM);
+    InitPointer(m_pEEPROM);
+    m_iROMSize = 0;
+    m_Type = CartridgeNotSupported;
+    m_bValidROM = false;
+    m_bReady = false;
+    m_bInGameDatabase = false;
+    m_pGameDatabaseName = NULL;
+    m_szFilePath[0] = 0;
+    m_szFileName[0] = 0;
+    m_szFileDirectory[0] = 0;
+    m_iROMBankCount = 0;
+    m_bPAL = false;
+    m_bF18ARequired = false;
+    m_bSRAM = false;
+    m_iCRC = 0;
+    m_softpatch_applied = false;
+    m_softpatch_path[0] = 0;
+}
+
+Cartridge::~Cartridge()
+{
+    SafeDeleteArray(m_pROM);
+    SafeDeleteArray(m_pEEPROM);
+}
+
+void Cartridge::Init()
+{
+    m_pEEPROM = new u8[0x400];
+    Reset();
+}
+
+void Cartridge::Reset()
+{
+    SafeDeleteArray(m_pROM);
+    m_iROMSize = 0;
+    m_Type = CartridgeNotSupported;
+    m_bValidROM = false;
+    m_bReady = false;
+    m_bInGameDatabase = false;
+    m_pGameDatabaseName = NULL;
+    m_szFilePath[0] = 0;
+    m_szFileName[0] = 0;
+    m_szFileDirectory[0] = 0;
+    m_iROMBankCount = 0;
+    m_bPAL = false;
+    m_bF18ARequired = false;
+    m_bSRAM = false;
+    m_iCRC = 0;
+    m_softpatch_applied = false;
+    m_softpatch_path[0] = 0;
+    for (int j = 0; j < 0x400; j++)
+        m_pEEPROM[j] = 0xFF;
+}
+
+void Cartridge::Swap(Cartridge& cartridge)
+{
+    std::swap(m_pROM, cartridge.m_pROM);
+    std::swap(m_iROMSize, cartridge.m_iROMSize);
+    std::swap(m_Type, cartridge.m_Type);
+    std::swap(m_bValidROM, cartridge.m_bValidROM);
+    std::swap(m_bReady, cartridge.m_bReady);
+    std::swap(m_bInGameDatabase, cartridge.m_bInGameDatabase);
+    std::swap(m_pGameDatabaseName, cartridge.m_pGameDatabaseName);
+    std::swap(m_szFilePath, cartridge.m_szFilePath);
+    std::swap(m_szFileName, cartridge.m_szFileName);
+    std::swap(m_szFileDirectory, cartridge.m_szFileDirectory);
+    std::swap(m_iROMBankCount, cartridge.m_iROMBankCount);
+    std::swap(m_bPAL, cartridge.m_bPAL);
+    std::swap(m_bF18ARequired, cartridge.m_bF18ARequired);
+    std::swap(m_iCRC, cartridge.m_iCRC);
+    std::swap(m_bSRAM, cartridge.m_bSRAM);
+    std::swap(m_pEEPROM, cartridge.m_pEEPROM);
+    std::swap(m_softpatch_applied, cartridge.m_softpatch_applied);
+    std::swap(m_softpatch_path, cartridge.m_softpatch_path);
+}
+
+u32 Cartridge::GetCRC() const
+{
+    return m_iCRC;
+}
+
+bool Cartridge::IsPAL() const
+{
+    return m_bPAL;
+}
+
+bool Cartridge::IsF18ARequired() const
+{
+    return m_bF18ARequired;
+}
+
+bool Cartridge::IsValidROM() const
+{
+    return m_bValidROM;
+}
+
+bool Cartridge::IsReady() const
+{
+    return m_bReady;
+}
+
+bool Cartridge::IsInGameDatabase() const
+{
+    return m_bInGameDatabase;
+}
+
+const char* Cartridge::GetGameDatabaseName() const
+{
+    return m_pGameDatabaseName;
+}
+
+Cartridge::CartridgeTypes Cartridge::GetType() const
+{
+    return m_Type;
+}
+
+void Cartridge::ForceConfig(Cartridge::ForceConfiguration config)
+{
+    m_iCRC = CalculateCRC32(0, m_pROM, m_iROMSize);
+    GatherMetadata(m_iCRC);
+
+    if (config.region == CartridgePAL)
+    {
+        Log("Forcing Region: PAL");
+        m_bPAL = true;
+    }
+    else if (config.region == CartridgeNTSC)
+    {
+        Log("Forcing Region: NTSC");
+        m_bPAL = false;
+    }
+
+    switch (config.type)
+    {
+        case Cartridge::CartridgeColecoVision:
+            m_Type = config.type;
+            Log("Forcing Mapper: Colecovision");
+            break;
+        case Cartridge::CartridgeMegaCart:
+            m_Type = config.type;
+            Log("Forcing Mapper: MegaCart");
+            break;
+        case Cartridge::CartridgeActivisionCart:
+            m_Type = config.type;
+            Log("Forcing Mapper: Activision");
+            break;
+        case Cartridge::CartridgeOCM:
+            m_Type = config.type;
+            Log("Forcing Mapper: OCM");
+            break;
+        default:
+            break;
+    }
+}
+
+const char* Cartridge::GetFilePath() const
+{
+    return m_szFilePath;
+}
+
+const char* Cartridge::GetFileName() const
+{
+    return m_szFileName;
+}
+
+const char* Cartridge::GetFileDirectory() const
+{
+    return m_szFileDirectory;
+}
+
+bool Cartridge::IsSoftpatchApplied() const
+{
+    return m_softpatch_applied;
+}
+
+const char* Cartridge::GetSoftpatchPath() const
+{
+    return m_softpatch_path;
+}
+
+u8* Cartridge::GetEEPROM() const
+{
+    return m_pEEPROM;
+}
+
+bool Cartridge::LoadFromZipFile(const u8* buffer, int size, bool softpatching)
+{
+    using namespace std;
+
+    mz_zip_archive zip_archive;
+    mz_bool status;
+    memset(&zip_archive, 0, sizeof (zip_archive));
+
+    status = mz_zip_reader_init_mem(&zip_archive, (void*) buffer, size, 0);
+    if (!status)
+    {
+        Log("mz_zip_reader_init_mem() failed!");
+        return false;
+    }
+
+    for (unsigned int i = 0; i < mz_zip_reader_get_num_files(&zip_archive); i++)
+    {
+        mz_zip_archive_file_stat file_stat;
+        if (!mz_zip_reader_file_stat(&zip_archive, i, &file_stat))
+        {
+            Log("mz_zip_reader_file_stat() failed!");
+            mz_zip_reader_end(&zip_archive);
+            return false;
+        }
+
+        Debug("ZIP Content - Filename: \"%s\", Comment: \"%s\", Uncompressed size: %u, Compressed size: %u", file_stat.m_filename, file_stat.m_comment, (unsigned int) file_stat.m_uncomp_size, (unsigned int) file_stat.m_comp_size);
+
+        string fn((const char*) file_stat.m_filename);
+        transform(fn.begin(), fn.end(), fn.begin(), (int(*)(int)) tolower);
+        string extension = fn.substr(fn.find_last_of(".") + 1);
+
+        if ((extension == "col") || (extension == "cv") || (extension == "rom") || (extension == "bin"))
+        {
+            void *p;
+            size_t uncomp_size;
+
+            p = mz_zip_reader_extract_file_to_heap(&zip_archive, file_stat.m_filename, &uncomp_size, 0);
+            if (!p)
+            {
+                Log("mz_zip_reader_extract_file_to_heap() failed!");
+                mz_zip_reader_end(&zip_archive);
+                return false;
+            }
+
+            bool ok = LoadFromBufferWithSoftpatch((const u8*) p, (int)uncomp_size, softpatching);
+
+            free(p);
+            mz_zip_reader_end(&zip_archive);
+
+            return ok;
+        }
+    }
+
+    mz_zip_reader_end(&zip_archive);
+    return false;
+}
+
+void Cartridge::SetFilePath(const char* path)
+{
+    strncpy_fit(m_szFilePath, path, sizeof(m_szFilePath));
+
+    std::string pathstr(path);
+    std::string filename;
+    size_t pos = pathstr.find_last_of("\\");
+    if (pos != std::string::npos)
+        filename.assign(pathstr.begin() + pos + 1, pathstr.end());
+    else
+    {
+        pos = pathstr.find_last_of("/");
+        if (pos != std::string::npos)
+            filename.assign(pathstr.begin() + pos + 1, pathstr.end());
+        else
+            filename = pathstr;
+    }
+    strncpy_fit(m_szFileName, filename.c_str(), sizeof(m_szFileName));
+
+    std::string directory;
+    size_t dir_pos = pathstr.find_last_of("\\/");
+    if (dir_pos != std::string::npos)
+        directory = pathstr.substr(0, dir_pos);
+    else
+        directory = ".";
+    strncpy_fit(m_szFileDirectory, directory.c_str(), sizeof(m_szFileDirectory));
+}
+
+bool Cartridge::LoadFromFile(const char* path, bool softpatching)
+{
+    using namespace std;
+
+    Log("Loading %s...", path);
+
+    Reset();
+    SetFilePath(path);
+
+    ifstream file;
+    open_ifstream_utf8(file, path, ios::in | ios::binary | ios::ate);
+
+    if (file.is_open())
+    {
+        int size = static_cast<int> (file.tellg());
+        if (size > 0)
+        {
+            char* memblock = new char[size];
+            file.seekg(0, ios::beg);
+
+            if (file.read(memblock, size))
+            {
+                string fn(path);
+                transform(fn.begin(), fn.end(), fn.begin(), (int(*)(int)) tolower);
+                string extension = fn.substr(fn.find_last_of(".") + 1);
+
+                if (extension == "zip")
+                {
+                    Debug("Loading from ZIP...");
+                    m_bReady = LoadFromZipFile(reinterpret_cast<u8*> (memblock), size, softpatching);
+                }
+                else
+                {
+                    m_bReady = LoadFromBufferWithSoftpatch(reinterpret_cast<u8*> (memblock), size, softpatching);
+                }
+
+                if (m_bReady)
+                {
+                    Debug("ROM loaded", path);
+                }
+                else
+                {
+                    Log("There was a problem loading the memory for file %s...", path);
+                }
+            }
+            else
+            {
+                Log("There was a problem reading the file %s...", path);
+                m_bReady = false;
+            }
+
+            SafeDeleteArray(memblock);
+        }
+        else
+        {
+            Log("Invalid file size %d for file %s...", size, path);
+            m_bReady = false;
+        }
+
+        file.close();
+    }
+    else
+    {
+        Log("There was a problem loading the file %s...", path);
+        m_bReady = false;
+    }
+
+    if (!m_bReady && m_softpatch_applied)
+    {
+        Error("Media rejected after applying IPS patch %s. Loading unpatched media.", m_softpatch_path);
+        return LoadFromFile(path, false);
+    }
+    else if (!m_bReady)
+    {
+        Reset();
+    }
+
+    return m_bReady;
+}
+
+bool Cartridge::IsValidROMBuffer(const u8* buffer, int size)
+{
+    if (!IsValidPointer(buffer) || (size <= 0))
+        return false;
+
+    u8 second = size > 1 ? buffer[1] : 0xFF;
+    u16 header = second | (buffer[0] << 8);
+
+    if ((header == 0xAA55) || (header == 0x55AA))
+        return true;
+
+    if (size > 0x8000)
+    {
+        int offset = size - 0x4000;
+        header = buffer[offset + 1] | (buffer[offset] << 8);
+
+        if ((header == 0xAA55) || (header == 0x55AA))
+            return true;
+    }
+
+    u32 crc = CalculateCRC32(0, buffer, size);
+
+    for (int i = 0; kGameDatabase[i].title != 0; i++)
+    {
+        if ((kGameDatabase[i].crc == crc) && (kGameDatabase[i].mode & GC_GameDBMode_OCM))
+            return true;
+    }
+
+    return false;
+}
+
+bool Cartridge::LoadFromBuffer(const u8* buffer, int size, const char* path,
+    bool softpatching)
+{
+    if (!IsValidPointer(buffer) || !IsValidPointer(path))
+        return false;
+
+    Reset();
+    SetFilePath(path);
+    m_bReady = LoadFromBufferWithSoftpatch(buffer, size, softpatching);
+
+    if (!m_bReady && m_softpatch_applied)
+    {
+        Error("Media rejected after applying IPS patch %s. Loading unpatched media.", m_softpatch_path);
+        Reset();
+        SetFilePath(path);
+        m_bReady = LoadFromBufferWithSoftpatch(buffer, size, false);
+    }
+
+    if (!m_bReady)
+        Reset();
+
+    return m_bReady;
+}
+
+bool Cartridge::LoadFromBufferWithSoftpatch(const u8* buffer, int size, bool softpatching)
+{
+    u8* patched_buffer = NULL;
+    int patched_size = 0;
+    char patch_path[4096] = {};
+    bool patched = softpatching && ips_apply_patch(m_szFilePath, buffer, size, &patched_buffer, &patched_size, patch_path, sizeof(patch_path));
+    bool loaded;
+
+    if (patched)
+        loaded = LoadFromBuffer(patched_buffer, patched_size);
+    else
+        loaded = LoadFromBuffer(buffer, size);
+
+    m_softpatch_applied = patched;
+
+    if (m_softpatch_applied)
+        strncpy_fit(m_softpatch_path, patch_path, sizeof(m_softpatch_path));
+    else
+        m_softpatch_path[0] = 0;
+
+    SafeDeleteArray(patched_buffer);
+
+    return loaded;
+}
+
+bool Cartridge::LoadFromBuffer(const u8* buffer, int size)
+{
+    if (IsValidPointer(buffer))
+    {
+        Log("Loading from buffer... Size: %d", size);
+
+        if (size <= 0)
+        {
+            Log("Invalid size found. %d bytes", size);
+            return false;
+        }
+
+        if ((size >= 4) && (buffer[0] == 'P') && (buffer[1] == 'K') &&
+            (((buffer[2] == 3) && (buffer[3] == 4)) ||
+            ((buffer[2] == 5) && (buffer[3] == 6)) ||
+            ((buffer[2] == 7) && (buffer[3] == 8))))
+        {
+            return LoadFromZipFile(buffer, size, false);
+        }
+
+        // Unkown size
+        if ((size % 1024) != 0)
+        {
+            Log("Invalid size found. %d bytes", size);
+            //return false;
+        }
+
+        int crcSize = size;
+        m_iROMSize = MAX(size, 0x4000);
+        m_pROM = new u8[m_iROMSize];
+        memset(m_pROM, 0xFF, m_iROMSize);
+        memcpy(m_pROM, buffer, size);
+
+        m_bReady = true;
+
+        m_iCRC = CalculateCRC32(0, m_pROM, crcSize);
+
+        m_bReady = GatherMetadata(m_iCRC);
+
+        return m_bReady;
+    }
+    else
+        return false;
+}
+
+bool Cartridge::GatherMetadata(u32 crc)
+{
+    m_bPAL = false;
+    m_bSRAM = false;
+    m_bF18ARequired = false;
+
+    Log("ROM CRC32: %X", crc);
+
+    Log("ROM Size: %d KB", m_iROMSize / 1024);
+
+    m_iROMBankCount = (m_iROMSize / 0x4000) + (m_iROMSize % 0x4000 ? 1 : 0);
+
+    Log("ROM Bank Count: %d", m_iROMBankCount);
+
+    m_Type = Cartridge::CartridgeNotSupported;
+
+    int headerOffset = 0;
+    u16 header = m_pROM[headerOffset + 1] | (m_pROM[headerOffset + 0] << 8);
+    m_bValidROM = (header == 0xAA55) || (header == 0x55AA);
+
+    if (header == 0x6699)
+    {
+        Log("Cartridge is a Colec Adam expansion ROM. Header: %X", header);
+    }
+
+    if (m_bValidROM && (m_iROMSize <= 0x8000))
+    {
+        m_Type = Cartridge::CartridgeColecoVision;
+        Log("Cartridge is Colecovision. ROM size: %d bytes.", m_iROMSize);
+    }
+    else if (m_bValidROM && (m_iROMSize > 0x8000))
+    {
+        m_Type = Cartridge::CartridgeActivisionCart;
+        Log("Cartridge is Activision Cart. ROM size: %d bytes. Banks %d.", m_iROMSize, m_iROMBankCount);
+    }
+    else if (!m_bValidROM && (m_iROMSize > 0x8000))
+    {
+        headerOffset = m_iROMSize - 0x4000;
+        header = m_pROM[headerOffset + 1] | (m_pROM[headerOffset + 0] << 8);
+        m_bValidROM = (header == 0xAA55) || (header == 0x55AA);
+
+        if (m_bValidROM)
+        {
+            m_Type = Cartridge::CartridgeMegaCart;
+            Log("Cartridge is Mega Cart. ROM size: %d bytes. Banks %d.", m_iROMSize, m_iROMBankCount);
+        }
+    }
+    else
+    {
+        m_Type = Cartridge::CartridgeNotSupported;
+        Log("ROM is NOT Valid. No header found.");
+    }
+
+    GetInfoFromDB(crc);
+
+    switch (m_Type)
+    {
+        case Cartridge::CartridgeColecoVision:
+            Log("ColecoVision mapper found");
+            break;
+        case Cartridge::CartridgeMegaCart:
+            Log("MegaCart mapper found");
+            break;
+        case Cartridge::CartridgeActivisionCart:
+            Log("Activision mapper found");
+            break;
+        case Cartridge::CartridgeOCM:
+            Log("OCM mapper found");
+            break;
+        case Cartridge::CartridgeNotSupported:
+            Log("Cartridge not supported!!");
+            break;
+        default:
+            Log("ERROR with cartridge type!!");
+            break;
+    }
+
+    return (m_Type != CartridgeNotSupported);
+}
+
+void Cartridge::GetInfoFromDB(u32 crc)
+{
+    int i = 0;
+    m_bInGameDatabase = false;
+    m_pGameDatabaseName = NULL;
+
+    while(!m_bInGameDatabase && (kGameDatabase[i].title != 0))
+    {
+        u32 db_crc = kGameDatabase[i].crc;
+
+        if (db_crc == crc)
+        {
+            m_bInGameDatabase = true;
+            m_pGameDatabaseName = kGameDatabase[i].title;
+
+            Log("ROM found in database: %s. CRC: %X", kGameDatabase[i].title, crc);
+
+            if (kGameDatabase[i].mode & GC_GameDBMode_SRAM)
+            {
+                Log("Cartridge with SRAM");
+                m_bSRAM = true;
+            }
+
+            if (kGameDatabase[i].mode & GC_GameDBMode_OCM)
+            {
+                Log("Cartridge with OCM mapper");
+                m_Type = CartridgeOCM;
+                for (int j = 0; j < 0x400; j++)
+                    m_pEEPROM[j] = 0xFF;
+            }
+
+            if (kGameDatabase[i].mode & GC_GameDBMode_F18A)
+            {
+                Log("Cartridge requires F18A");
+                m_bF18ARequired = true;
+            }
+        }
+        else
+            i++;
+    }
+
+    if (!m_bInGameDatabase)
+    {
+        Debug("ROM not found in database. CRC: %X", crc);
+    }
+}

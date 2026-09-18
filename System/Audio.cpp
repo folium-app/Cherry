@@ -1,0 +1,224 @@
+/*
+ * Gearcoleco - ColecoVision Emulator
+ * Copyright (C) 2021  Ignacio Sanchez
+
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * any later version.
+
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see http://www.gnu.org/licenses/
+ *
+ */
+
+#include "Audio.h"
+
+Audio::Audio()
+{
+    m_ElapsedCycles = 0;
+    m_iSampleRate = GC_AUDIO_SAMPLE_RATE;
+    InitPointer(m_pApu);
+    InitPointer(m_pBuffer);
+    InitPointer(m_pSampleBuffer);
+    m_bPAL = false;
+    InitPointer(m_pAY8910);
+    InitPointer(m_pSGMBuffer);
+    m_bMute = false;
+    m_master_volume = 1.0f;
+    m_bVgmRecordingEnabled = false;
+    m_AY8910Register = 0;
+    for (int i = 0; i < 4; i++)
+    {
+        InitPointer(m_pDebugChannelBuffer[i]);
+        m_iDebugChannelSamples[i] = 0;
+    }
+}
+
+Audio::~Audio()
+{
+    SafeDelete(m_pApu);
+    SafeDelete(m_pBuffer);
+    SafeDeleteArray(m_pSampleBuffer);
+    SafeDelete(m_pAY8910);
+    SafeDeleteArray(m_pSGMBuffer);
+    for (int i = 0; i < 4; i++)
+        SafeDeleteArray(m_pDebugChannelBuffer[i]);
+}
+
+void Audio::Init()
+{
+    m_pSampleBuffer = new blip_sample_t[GC_AUDIO_BUFFER_SIZE];
+
+    m_pApu = new Sms_Apu();
+    m_pBuffer = new Stereo_Buffer();
+
+    m_pBuffer->clock_rate(m_bPAL ? GC_MASTER_CLOCK_PAL : GC_MASTER_CLOCK_NTSC);
+    m_pBuffer->set_sample_rate(m_iSampleRate);
+
+    //m_pApu->treble_eq(-15.0);
+    //m_pBuffer->bass_freq(100);
+
+    m_pApu->output(m_pBuffer->center(), m_pBuffer->left(), m_pBuffer->right());
+    m_pApu->volume(0.6);
+
+    m_pSGMBuffer = new s16[GC_AUDIO_BUFFER_SIZE];
+
+    m_pAY8910 = new AY8910();
+    m_pAY8910->Init(m_bPAL ? GC_MASTER_CLOCK_PAL : GC_MASTER_CLOCK_NTSC);
+
+    for (int i = 0; i < 4; i++)
+        m_pDebugChannelBuffer[i] = new blip_sample_t[GC_AUDIO_BUFFER_SIZE];
+}
+
+void Audio::Reset(bool bPAL)
+{
+    m_bPAL = bPAL;
+
+    m_ElapsedCycles = 0;
+    m_AY8910Register = 0;
+
+    m_pApu->reset();
+    m_pApu->volume(0.6);
+
+    if (m_pApu->is_debug_enabled())
+    {
+        long clock = m_bPAL ? GC_MASTER_CLOCK_PAL : GC_MASTER_CLOCK_NTSC;
+        m_pApu->init_debug_buffers(m_iSampleRate, clock);
+    }
+
+    m_pBuffer->clear();
+    m_pBuffer->clock_rate(m_bPAL ? GC_MASTER_CLOCK_PAL : GC_MASTER_CLOCK_NTSC);
+
+    m_pAY8910->Reset(m_bPAL ? GC_MASTER_CLOCK_PAL : GC_MASTER_CLOCK_NTSC);
+
+    for (int i = 0; i < 4; i++)
+    {
+        memset(m_pDebugChannelBuffer[i], 0, GC_AUDIO_BUFFER_SIZE * sizeof(blip_sample_t));
+        m_iDebugChannelSamples[i] = 0;
+    }
+
+    memset(m_pSampleBuffer, 0, GC_AUDIO_BUFFER_SIZE * sizeof(blip_sample_t));
+    memset(m_pSGMBuffer, 0, GC_AUDIO_BUFFER_SIZE * sizeof(s16));
+}
+
+void Audio::Mute(bool mute)
+{
+    m_bMute = mute;
+}
+
+void Audio::EndFrame(s16* pSampleBuffer, int* pSampleCount)
+{
+    m_pApu->end_frame((blip_time_t)m_ElapsedCycles);
+    m_pBuffer->end_frame((blip_time_t)m_ElapsedCycles);
+
+    int count = static_cast<int>(m_pBuffer->read_samples(m_pSampleBuffer, GC_AUDIO_BUFFER_SIZE));
+
+    if (m_pApu->is_debug_enabled())
+    {
+        for (int i = 0; i < 4; i++)
+            m_pApu->read_debug_samples(m_pDebugChannelBuffer[i], i, GC_AUDIO_BUFFER_SIZE, &m_iDebugChannelSamples[i]);
+    }
+
+    m_pAY8910->EndFrame(m_pSGMBuffer);
+
+    if (IsValidPointer(pSampleBuffer) && IsValidPointer(pSampleCount))
+    {
+        *pSampleCount = count;
+
+        for (int i=0; i<count; i++)
+        {
+            if (m_bMute || (m_master_volume <= 0.0f))
+            {
+                pSampleBuffer[i] = 0;
+            }
+            else
+            {
+                s32 mix = m_pSampleBuffer[i] + m_pSGMBuffer[i];
+                mix = (s32)((float)mix * m_master_volume);
+
+                mix = CLAMP(mix, -32768, 32767);
+
+                pSampleBuffer[i] = (s16)mix;
+            }
+        }
+    }
+
+    m_ElapsedCycles = 0;
+}
+
+void Audio::SaveState(std::ostream& stream)
+{
+    stream.write(reinterpret_cast<const char*> (&m_ElapsedCycles), sizeof(m_ElapsedCycles));
+    stream.write(reinterpret_cast<const char*> (m_pSampleBuffer), sizeof(blip_sample_t) * GC_AUDIO_BUFFER_SIZE);
+    stream.write(reinterpret_cast<const char*> (m_pSGMBuffer), sizeof(s16) * GC_AUDIO_BUFFER_SIZE);
+    m_pAY8910->SaveState(stream);
+    m_pApu->SaveState(stream);
+    m_pBuffer->SaveState(stream);
+}
+
+void Audio::LoadState(std::istream& stream, int version)
+{
+    stream.read(reinterpret_cast<char*> (&m_ElapsedCycles), sizeof(m_ElapsedCycles));
+    stream.read(reinterpret_cast<char*> (m_pSampleBuffer), sizeof(blip_sample_t) * GC_AUDIO_BUFFER_SIZE);
+    stream.read(reinterpret_cast<char*> (m_pSGMBuffer), sizeof(s16) * GC_AUDIO_BUFFER_SIZE);
+    m_pAY8910->LoadState(stream);
+
+    if (version >= 104)
+    {
+        m_pApu->LoadState(stream);
+        m_pBuffer->LoadState(stream);
+    }
+    else
+    {
+        m_pApu->reset();
+        m_pBuffer->clear();
+    }
+
+    m_pApu->volume(0.6);
+}
+
+void Audio::LoadStateV1(std::istream& stream)
+{
+    using namespace std;
+
+    stream.read(reinterpret_cast<char*> (&m_ElapsedCycles), sizeof(m_ElapsedCycles));
+    stream.seekg(sizeof(blip_sample_t) * GC_AUDIO_BUFFER_SIZE_V1, ios::cur);
+    memset(m_pSampleBuffer, 0, sizeof(blip_sample_t) * GC_AUDIO_BUFFER_SIZE);
+    stream.seekg(sizeof(s16) * GC_AUDIO_BUFFER_SIZE_V1, ios::cur);
+    memset(m_pSGMBuffer, 0, sizeof(s16) * GC_AUDIO_BUFFER_SIZE);
+    m_pAY8910->LoadState(stream);
+
+    m_pApu->reset();
+    m_pApu->volume(0.6);
+    m_pBuffer->clear();
+}
+
+bool Audio::StartVgmRecording(const char* file_path, int clock_rate, bool is_pal, const VgmMetadata& metadata)
+{
+    if (m_bVgmRecordingEnabled)
+        return false;
+
+    m_VgmRecorder.Start(file_path, clock_rate, is_pal, metadata);
+    m_bVgmRecordingEnabled = m_VgmRecorder.IsRecording();
+    return m_bVgmRecordingEnabled;
+}
+
+void Audio::StopVgmRecording()
+{
+    if (m_bVgmRecordingEnabled)
+    {
+        m_VgmRecorder.Stop();
+        m_bVgmRecordingEnabled = false;
+    }
+}
+
+bool Audio::IsVgmRecording() const
+{
+    return m_bVgmRecordingEnabled;
+}

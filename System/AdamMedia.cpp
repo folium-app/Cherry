@@ -20,7 +20,7 @@
 #include <string.h>
 #include "AdamMedia.h"
 #define MINIZ_NO_ZLIB_COMPATIBLE_NAMES
-#include "miniz.h"
+#include "miniz/miniz.h"
 #undef MINIZ_NO_ZLIB_COMPATIBLE_NAMES
 
 AdamMedia::AdamMedia()

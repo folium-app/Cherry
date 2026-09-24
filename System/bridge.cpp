@@ -6,7 +6,7 @@
 //
 
 #include "gearcoleco/bridge.h"
-#include "gearcoleco/CVMemory.h"
+#include "gearcoleco/Memory.h"
 #include "gearcoleco/GearcolecoCore.h"
 
 #import "Cherry-Swift.h"
@@ -274,6 +274,8 @@ struct CherryCPP {
     std::atomic<bool> paused, running;
     std::condition_variable_any cv;
 } cherry_cntnr;
+
+bool g_mcp_stdio_mode{false};
 
 void cherry::print_about(void) {
     printf("Welcome to Cherry\n");

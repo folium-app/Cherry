@@ -2,34 +2,32 @@
 //  Cherry.swift
 //  Cherry
 //
-//  Created by Jarrod Norwell on 9/8/2026.
+//  Created by Jarrod Norwell on 2/9/2026.
 //
 
 import Foundation
 
-public enum CherryButton : Int32, Codable {
-    case button8 = 1,
-         button4 = 2,
-         button5 = 3,
-         buttonBlue = 4,
-         button7 = 5,
-         buttonHash = 6,
-         button2 = 7,
-         buttonPurple = 8,
-         buttonAsterisk = 9,
-         button0 = 10,
-         button9 = 11,
-         button3 = 12,
-         button1 = 13,
-         button6 = 14,
-         buttonUp = 16,
-         buttonRight = 17,
-         buttonDown = 18,
-         buttonLeft = 19,
-         buttonLeftTrigger = 20,
-         buttonRightTrigger = 21
+public enum CherryButton : UInt32, Codable {
+    case up = 0x001,
+         down = 0x002,
+         left = 0x004,
+         right = 0x008,
+         l = 0x010,
+         r = 0x020,
+         num1 = 0x040,
+         num2 = 0x080,
+         num3 = 0x100,
+         num4 = 0x200,
+         num5 = 0x400,
+         num6 = 0x800,
+         num7 = 0x1000,
+         num8 = 0x2000,
+         num9 = 0x4000,
+         num0 = 0x8000,
+         star = 0x10000,
+         pound = 0x20000
     
-    var int32: Int32 { rawValue }
+    var uint32: UInt32 { rawValue }
 }
 
 public class CherryCommon {
@@ -57,7 +55,6 @@ public actor CherrySystem {
         cherry.print_about()
     }
     
-    
     public func initializePaths() {
         cherry.initialize_paths()
     }
@@ -66,16 +63,13 @@ public actor CherrySystem {
         cherry.initialize_system()
     }
     
-    
     public func destroySystem() {
         cherry.destroy_system()
     }
     
-    
     public func insertDisc(at url: URL) {
         cherry.insert_disc(std.string(url.path))
     }
-    
     
     public func set(change: Bool = false, isRunning: Bool = false) {
         if change {
@@ -107,21 +101,13 @@ public actor CherrySystem {
         }
     }
     
+    
     public func start() {
         cherry.start()
     }
     
     public func stop() {
         cherry.stop()
-    }
-    
-    
-    public nonisolated func press(button: CherryButton, index: Int32) {
-        cherry.press_button(button.int32, index)
-    }
-    
-    public nonisolated func release(button: CherryButton, index: Int32) {
-        cherry.release_button(button.int32, index)
     }
     
     
@@ -134,7 +120,20 @@ public actor CherrySystem {
     }
     
     
-    public nonisolated func videoBuffer(callback: cherry.VideoBufferCallback) {
+    public nonisolated func press(button: CherryButton, index: Int32 = 0) {
+        cherry.press_button(button.uint32)
+    }
+    
+    public nonisolated func release(button: CherryButton, index: Int32 = 0) {
+        cherry.release_button(button.uint32)
+    }
+    
+    
+    public nonisolated func audioBuffer(callback: cherry.AudioVideoBufferCallback) {
+        cherry.audio_buffer_callback(callback)
+    }
+    
+    public nonisolated func videoBuffer(callback: cherry.AudioVideoBufferCallback) {
         cherry.video_buffer_callback(callback)
     }
     
@@ -142,6 +141,7 @@ public actor CherrySystem {
     public func setContext(context: UnsafeMutableRawPointer) {
         cherry.set_context(context)
     }
+    
     
     public nonisolated func boxartURLString(for url: URL) -> String? {
         var title: String = url.deletingPathExtension().lastPathComponent

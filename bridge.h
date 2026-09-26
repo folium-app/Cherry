@@ -2,13 +2,10 @@
 //  bridge.h
 //  Cherry
 //
-//  Created by Jarrod Norwell on 9/8/2026.
+//  Created by Jarrod Norwell on 2/7/2026.
 //
 
-#pragma once
-
 #include <cstdint>
-#include <functional>
 #include <string>
 
 namespace cherry {
@@ -24,16 +21,18 @@ void insert_disc(std::string);
 bool is_paused(bool = false, bool = false);
 bool is_running(bool = false, bool = false);
 
-void start(void);
-void stop(void);
+void start(void), stop(void);
 
 int framebuffer_height(void), framebuffer_width(void);
 
-using VideoBufferCallback = void(*)(void*, uint8_t*);
-VideoBufferCallback video_callback;
-void video_buffer_callback(VideoBufferCallback);
+using AudioVideoBufferCallback = void(*)(void*, uint32_t*, size_t);
+AudioVideoBufferCallback audio_callback;
+void audio_buffer_callback(AudioVideoBufferCallback);
 
-void press_button(int, int), release_button(int, int);
+AudioVideoBufferCallback video_callback;
+void video_buffer_callback(AudioVideoBufferCallback);
+
+void press_button(uint32_t), release_button(uint32_t);
 
 void* context;
 void set_context(void* context);

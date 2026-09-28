@@ -152,4 +152,21 @@ public actor CherrySystem {
         
         return "\(repository)/refs/heads/master/\(path)/\(title).png"
     }
+    
+    
+    public nonisolated func saveStatePath(for index: Int) -> String {
+        String(cherry.save_state_path(Int32(index)))
+    }
+    
+    public func saveStateExists(for index: Int) -> Bool {
+        cherry.save_state_exists(Int32(index))
+    }
+    
+    public func saveStateLoad(for index: Int) {
+        cherry.load_state(Int32(index))
+    }
+    
+    public func saveStateSave(for index: Int) {
+        cherry.save_state(Int32(index))
+    }
 }

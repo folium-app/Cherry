@@ -10,6 +10,7 @@
 
 #include "Shared/EmuSettings.h"
 #include "Shared/MessageManager.h"
+#include "Shared/SaveStateManager.h"
 #include "Utilities/FolderUtilities.h"
 
 #include <atomic>
@@ -199,4 +200,28 @@ void cherry::release_button(uint32_t button) {
 
 void cherry::set_context(void* context) {
     cherry::context = context;
+}
+
+
+bool cherry::save_state_exists(int index) {
+    if (const auto& save_state_manager = cntnr_c.emulator->GetSaveStateManager()) {
+        const auto& path{save_state_manager->GetSaveStatePath(index)};
+        return std::filesystem::exists(path) && std::filesystem::file_size(path) > 0;
+    } return false;
+}
+
+std::string cherry::save_state_path(int index) {
+    if (const auto& save_state_manager = cntnr_c.emulator->GetSaveStateManager()) {
+        return save_state_manager->GetSaveStatePath(index);
+    } return {};
+}
+
+void cherry::load_state(int index) {
+    if (const auto& save_state_manager = cntnr_c.emulator->GetSaveStateManager())
+        save_state_manager->LoadState(index);
+}
+
+void cherry::save_state(int index) {
+    if (const auto& save_state_manager = cntnr_c.emulator->GetSaveStateManager())
+        save_state_manager->SaveState(index);
 }
